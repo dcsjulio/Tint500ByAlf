@@ -1,0 +1,7 @@
+severity = 2
+
+[-ValuesAndExpressions::ProhibitLongChainsOfMethodCalls]
+[-Subroutines::ProhibitSubroutinePrototypes]
+[-ErrorHandling::RequireCarping]
+[-NamingConventions::Capitalization]
+[-ValuesAndExpressions::ProhibitMagicNumbers]
