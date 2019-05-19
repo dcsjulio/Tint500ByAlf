@@ -17,15 +17,14 @@ use Mojo::IOLoop::Delay;
 use Mojo::UserAgent;
 use Mojo::JSON 'decode_json';
 
-our $VERSION = '0.6';
+our $VERSION = '0.9';
 
-my %params;
-my %cache;
+my (%param, %cache);
 
 ## Configuration constants ##
-# $params{u} = 'foobar@foo.bar';
-# $params{p} = 'fooBarFooBar Password';
-$params{l} = 125;
+# $param{u} = 'foobar@foo.bar';
+# $param{p} = 'fooBarFooBar Password';
+$param{l} = 125;
 
 const my $C_USER_AGENT => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:66.0) Gecko/20100101 Firefox/66.0';
 const my $C_MAX_WORKERS => 15;
@@ -41,7 +40,7 @@ Usage:
     -r | --report   : File with users to report
     -f | --friends  : Inspect friends and check for bots
                       Cannot be used with --report
-    -l | --likes    : Number of likes threshold (default = $params{l})
+    -l | --likes    : Number of likes threshold (default = $param{l})
     -u | --user     : Login credentials, user name
     -p | --password : Login credentials, password
 
@@ -51,54 +50,62 @@ Usage:
 EOFH
 
 ## URL constants ##
-const my $U_BASE => 'https://500px.com/';
-const my $U_LOGIN => 'https://500px.com/login';
-const my $U_SESSION => 'https://api.500px.com/v1/session';
-const my $U_FRIENDS => 'https://api.500px.com/v1/users/%s/friends?fullformat=1&page=%s&rpp=50';
-const my $U_USER => 'https://api.500px.com/v1/users?';
-const my $U_REPORT => 'https://500px.com/moderate/save';
+const my %URL => (
+  BASE => 'https://500px.com/',
+  LOGIN => 'https://500px.com/login',
+  SESSION => 'https://api.500px.com/v1/session',
+  FRIENDS => 'https://api.500px.com/v1/users/%s/friends?fullformat=1&page=%s&rpp=' . $C_RPP,
+  USER => 'https://api.500px.com/v1/users?',
+  REPORT => 'https://500px.com/moderate/save',
+);
 
 ## Error Messages ##
-const my $E_NO_CSRF_NAME => "CSRF Token name was not found\n";
-const my $E_NO_CSRF_VALUE => "CSRF Token value was not found\n";
-const my $E_UNSCC_LOGIN => "Login Json did not return success\n";
-const my $E_PARSE_AFFECTION => sub { "Could not parse affection: $_[0]\n" };
-const my $E_PARSE_ID => "User Id could not be parsed\n";
-const my $E_GET_OPTIONS => "Error in command line arguments. Use --help.\n";
-const my $E_MISS => "Report/Friends argument is required\n";
-const my $E_NOT_FILE => "File does not exist\n";
-const my $E_NO_CREDENTIAL => sub { "Missing credential parameter: $_[0]\n" };
-const my $E_OPEN => sub { "Could not open file $_[0]\n" };
-const my $E_CLOSE => sub { "Could not close file $_[0]\n" };
-const my $E_REP_FR => "Report/Friends are exclusive options\n";
-const my $E_UNKNOWKN_OPTION => "Unknown url option\n";
-const my $E_BAD_RC => sub ($r, $e, $p) {
-  "Bad return code: Recieved $r but $e was expected. Page: $p\n"
-};
+const my %E_ERRORS => (
+  E_NO_CSRF_NAME => 'CSRF Token name was not found',
+  E_NO_CSRF_VALUE => 'CSRF Token value was not found',
+  E_UNSCC_LOGIN => 'Login Json did not return success',
+  E_PARSE_AFFECTION => "Could not parse affection: %s",
+  E_PARSE_ID => 'User Id could not be parsed',
+  E_GET_OPTIONS => 'Error in command line arguments. Use --help.',
+  E_MISS => 'Report/Friends argument is required',
+  E_NOT_FILE => 'File does not exist',
+  E_NO_CREDENTIAL => "Missing credential parameter: %s",
+  E_OPEN => "Could not open file %s",
+  E_CLOSE => "Could not close file %s",
+  E_REP_FR => 'Report/Friends are exclusive options',
+  E_UNKNOWKN_OPTION => 'Unknown url option',
+  E_BAD_RC => "Bad return code: Recieved %s but %s was expected. Page: %s",
+  E_UNK => 'Unknown error',
+);
 
 ## Functions ##
+sub hurt($which, @extraParameters) {
+  die $E_ERRORS{E_UNK} . "\n" if ! exists $E_ERRORS{$which};
+  die sprintf($E_ERRORS{$which} . "\n", @extraParameters);
+}
+
 sub check_parameters {
-  if ( ! defined $params{u}
-    || ! defined $params{p}
-    || ! defined $params{f} && ! defined $params{r}
-    ||   defined $params{f} &&   defined $params{r} ) {
+  if ( ! defined $param{u}
+    || ! defined $param{p}
+    || ! defined $param{f} && ! defined $param{r}
+    ||   defined $param{f} &&   defined $param{r} ) {
     say $C_HELP_CONTENT;
   }
 
-  die $E_MISS if ! defined $params{r} && ! defined $params{f};
-  die $E_NOT_FILE if defined $params{r} && ! -f $params{r};
-  die $E_NO_CREDENTIAL->('user') if ! defined $params{u};
-  die $E_NO_CREDENTIAL->('password') if ! defined $params{p};
-  die $E_REP_FR if defined $params{f} && defined $params{r};
+  hurt('E_MISS') if ! defined $param{r} && ! defined $param{f};
+  hurt('E_NOT_FILE') if defined $param{r} && ! -f $param{r};
+  hurt('E_NO_CREDENTIAL', 'user') if ! defined $param{u};
+  hurt('E_NO_CREDENTIAL', 'password') if ! defined $param{p};
+  hurt('E_REP_FR') if defined $param{f} && defined $param{r};
 
   return;
 }
 
 sub readUsersFromFile($file) {
   local $RS = undef;
-  open my $fh, q(<), $file or die $E_OPEN->($file);
+  open my $fh, q(<), $file or hurt('E_OPEN', $file);
   const my $content => <$fh>;
-  close $fh or die $E_CLOSE->($file);
+  close $fh or hurt('E_CLOSE', $file);
   return $content =~ m{ ^ (\S++) (?! .* ^ \1 $) }sxmg
 }
 
@@ -111,8 +118,8 @@ sub parseCsrfData($tx) {
   const my $csrfToken =>
     $dom->at('meta[name="csrf-token"]')->attr('content');
 
-  die $E_NO_CSRF_NAME if ! $csrfName;
-  die $E_NO_CSRF_VALUE if ! $csrfToken;
+  hurt('E_NO_CSRF_NAME') if ! $csrfName;
+  hurt('E_NO_CSRF_VALUE') if ! $csrfToken;
 
   return { param => $csrfName, token => $csrfToken };
 }
@@ -120,18 +127,18 @@ sub parseCsrfData($tx) {
 sub parseAffection($tx) {
   # Parsing with regex for performance reasons.
   $tx->res->to_string() =~ m/\bThis[ ]user[ ](liked[^']+)/sxmi
-    or die E_PARSE_AFFECTION->('Full affection string');
+    or hurt('E_PARSE_AFFECTION', 'Full affection string');
 
   const my $title => $1 =~ s/(?<=\d)[.](?=\d)|[.]$//sxmrg;
 
-  die $E_PARSE_AFFECTION->($title)
+  hurt('E_PARSE_AFFECTION', $title)
     if $title !~ m{ (\d+) \D++ (\d+) }sxmg;
 
   return { day => $1, week => $2, title => $title };
 }
 
 sub parseUserId($tx) {
-  die $E_PARSE_ID if $tx
+  hurt('E_PARSE_ID') if $tx
     ->res->dom->at('meta[property="al:ios:url"]')
     ->attr('content') !~ m{ /user/ (\d++) }isxmg;
 
@@ -155,9 +162,12 @@ sub setupUA {
   const my $ua => Mojo::UserAgent->new;
   $ua->transactor->name($C_USER_AGENT);
   $ua->max_redirects(0);
+  $ua->proxy->http($ENV{'HTTP_PROXY'});
+  $ua->proxy->https($ENV{'HTTPS_PROXY'} // $ENV{'HTTP_PROXY'});
   return $ua;
 }
 
+# Process urls actions (tickets) with a limit on max workers
 sub processUrl ($delay, $ua, $workers, $tickets) {
   return if ${$workers} < 1 || @{$tickets} < 1;
   const my $ticket => shift @{$tickets};
@@ -170,7 +180,7 @@ sub processUrl ($delay, $ua, $workers, $tickets) {
   };
 
   if ($ticket->{action} eq 'getUser') {
-    $ua->get($U_BASE . $ticket->{user} => $onReturn);
+    $ua->get($URL{BASE} . $ticket->{user} => $onReturn);
   }
   elsif ($ticket->{action} eq 'postReport') {
     const my $postData => {
@@ -178,16 +188,18 @@ sub processUrl ($delay, $ua, $workers, $tickets) {
       reported_item_id   => $ticket->{id},
       reason             => 2
     };
-    $ua->post($U_REPORT
+    $ua->post($URL{REPORT}
       => {'X-CSRF-Token' => $cache{csrf}}
       => form => $postData => $onReturn);
   }
   elsif ($ticket->{action} eq 'getFriends') {
-    $ua->get(sprintf($U_FRIENDS, $cache{userid}, $ticket->{num})
-      => {'X-CSRF-Token' => $cache{csrf}} => $onReturn);
+    $ua->get(
+      sprintf($URL{FRIENDS}, $cache{userid}, $ticket->{num})
+      => {'X-CSRF-Token' => $cache{csrf}}
+      => $onReturn);
   }
   else {
-    die $E_UNKNOWKN_OPTION;
+    hurt('E_UNKNOWKN_OPTION');
   }
 
   return;
@@ -219,29 +231,29 @@ sub showError($error) {
 sub evalRc($tx, $rc, $reason = undef) {
   # Evals RC. If reason is given then it dies
   return $tx->res->code == $rc if ! defined $reason;
-  die $E_BAD_RC->($tx->res->code, $rc, $reason)
+  hurt('E_BAD_RC', $tx->res->code, $rc, $reason)
     if $tx->res->code != $rc;
   return;
 }
 
 sub tooManyLikes($affection) {
-  return $affection->{day} >= $params{l}
-    || $affection->{week} / 7 >= $params{l};
+  return $affection->{day} >= $param{l}
+    || $affection->{week} / 7 >= $param{l};
 }
 
 ############
 ### MAIN ###
 ############
 
-GetOptions ('r|report=s'   => \$params{r},
-            'f|friends'    => \$params{f},
-            'l|likes=s'    => \$params{l},
-            'u|user=s'     => \$params{u},
-            'p|password=s' => \$params{p},
-            'h|help'       => \$params{h})
-  or die $E_GET_OPTIONS;
+GetOptions ('r|report=s'   => \$param{r},
+            'f|friends'    => \$param{f},
+            'l|likes=s'    => \$param{l},
+            'u|user=s'     => \$param{u},
+            'p|password=s' => \$param{p},
+            'h|help'       => \$param{h})
+  or hurt('E_GET_OPTIONS');
 
-if ($params{h}) {
+if ($param{h}) {
   say $C_HELP_CONTENT;
   exit 0;
 }
@@ -254,7 +266,7 @@ Mojo::IOLoop::Delay->new()->steps(
   ## Get Login Page
   sub ($delay) {
     say 'Please wait...';
-    $uagent->get($U_LOGIN => $delay->begin(0));
+    $uagent->get($URL{LOGIN} => $delay->begin(0));
     return;
   },
 
@@ -265,12 +277,14 @@ Mojo::IOLoop::Delay->new()->steps(
     const my $csrfData => parseCsrfData($tx);
 
     const my $data => {
-      'session[email]'     => $params{u},
-      'session[password]'  => $params{p},
+      'session[email]'     => $param{u},
+      'session[password]'  => $param{p},
       $csrfData->{param} => $csrfData->{token}
     };
 
-    $ua->post($U_SESSION => form => $data => $delay->begin(1));
+    $ua->post($URL{SESSION}
+      => form => $data
+      => $delay->begin(1));
 
     $cache{csrf} = $csrfData->{token};
     return;
@@ -283,7 +297,7 @@ Mojo::IOLoop::Delay->new()->steps(
     const my $jsonResponse => decode_json $tx->res->body;
     if ( ! exists $jsonResponse->{success}
       || $jsonResponse->{success} != Mojo::JSON::true) {
-      die $E_UNSCC_LOGIN;
+      hurt('E_UNSCC_LOGIN');
     }
 
     $cache{userid} = $jsonResponse->{user}{id};
@@ -297,7 +311,7 @@ const my @actionsReportUsers => (
   ## Get userpages for every user
   sub ($delay) {
     const my @tickets =>
-      setupUserTickets(readUsersFromFile($params{r}));
+      setupUserTickets(readUsersFromFile($param{r}));
 
     processTickets($delay, $uagent, @tickets);
     return;
@@ -353,7 +367,7 @@ const my @actionsReportUsers => (
 const my @actionsBotFriends => (
   # Get Friends number
   sub ($delay) {
-    $uagent->get($U_USER
+    $uagent->get($URL{USER}
       => {'X-CSRF-Token' => $cache{csrf}}
       => $delay->begin());
     return;
@@ -397,7 +411,7 @@ const my @actionsBotFriends => (
       const my $affect => parseAffection($tx);
       if (tooManyLikes($affect)) {
         printf "%s %s\n"
-          , $U_BASE . userNameFromUrl($tx)
+          , $URL{BASE} . userNameFromUrl($tx)
           , $affect->{title};
       }
     }
@@ -407,7 +421,7 @@ const my @actionsBotFriends => (
 );
 
 Mojo::IOLoop::Delay->new()->steps(
-  $params{f} ? @actionsBotFriends : @actionsReportUsers
+  $param{f} ? @actionsBotFriends : @actionsReportUsers
 )->catch(\&showError)->wait;
 
 1;
