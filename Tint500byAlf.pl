@@ -230,9 +230,9 @@ sub showError($error) {
 
 sub evalRc($tx, $rc, $reason = undef) {
   # Evals RC. If reason is given then it dies
-  return $tx->res->code == $rc if ! defined $reason;
-  hurt('E_BAD_RC', $tx->res->code, $rc, $reason)
-    if $tx->res->code != $rc;
+  const my $resCode => $tx->res->code // 0;
+  return $resCode == $rc if ! defined $reason;
+  hurt('E_BAD_RC', $resCode, $rc, $reason) if $resCode != $rc;
   return;
 }
 
