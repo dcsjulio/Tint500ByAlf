@@ -277,13 +277,14 @@ Mojo::IOLoop::Delay->new()->steps(
     const my $csrfData => parseCsrfData($tx);
 
     const my $data => {
-      'session[email]'     => $param{u},
-      'session[password]'  => $param{p},
-      $csrfData->{param} => $csrfData->{token}
+      'session' => {
+        'email'    => $param{u},
+        'password' => $param{p},
+      }
     };
 
     $ua->post($URL{SESSION}
-      => form => $data
+      => json => $data
       => $delay->begin(1));
 
     $cache{csrf} = $csrfData->{token};
@@ -295,12 +296,13 @@ Mojo::IOLoop::Delay->new()->steps(
     evalRc($tx, $C_R_OK, 'getSession');
 
     const my $jsonResponse => decode_json $tx->res->body;
-    if ( ! exists $jsonResponse->{success}
-      || $jsonResponse->{success} != Mojo::JSON::true) {
+    if ( ! exists $jsonResponse->{user} ) {
       hurt('E_UNSCC_LOGIN');
     }
 
     $cache{userid} = $jsonResponse->{user}{id};
+    $cache{csrf} = $tx->res->headers->header('x-csrf-token');
+
     return;
   }
 
@@ -365,10 +367,11 @@ const my @actionsReportUsers => (
 );
 
 const my @actionsBotFriends => (
+
   # Get Friends number
   sub ($delay) {
     $uagent->get($URL{USER}
-      => {'X-CSRF-Token' => $cache{csrf}}
+      => {'x-csrf-token' => $cache{csrf}}
       => $delay->begin());
     return;
   },
